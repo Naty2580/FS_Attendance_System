@@ -17,14 +17,13 @@ class CloseAttendanceSessions extends Command
     protected $signature = 'attendance:close-sessions';
     protected $description = 'Closes expired attendance sessions and marks unmarked students as absent.';
 
-    public function handle()
+   public function handle()
     {
         $now = Carbon::now();
         
-        // Find sessions that are not closed
-        $sessions = AttendanceSession::with(['schedule', 'schoolClass.studentHistory.student'])
-            ->where('status', '!=', 'closed')
-            ->get();
+        // 1. Fetch IDs of sessions that MIGHT be expired
+        // (We don't lock them yet, we just get the IDs to avoid locking the whole table)
+        $sessionIds = AttendanceSession::where('status', '!=', 'closed')->pluck('id');
 
         $absentStatus = AttendanceStatus::where('code', 'absent')->first();
         $systemUser = User::role('System Administrator')->first();
@@ -37,32 +36,45 @@ class CloseAttendanceSessions extends Command
         $closedCount = 0;
         $autoAbsentCount = 0;
 
-        foreach ($sessions as $session) {
-            // Dynamic Expiry = When the teacher clicked start + the total duration set by HR
-            $totalDuration = $session->schedule->total_session_minutes;
-            $closingDateTime = $session->started_at->copy()->addMinutes($totalDuration);
+        foreach ($sessionIds as $sessionId) {
+            
+            // 2. Wrap each session evaluation in its own dedicated transaction
+            DB::transaction(function () use ($sessionId, $now, $absentStatus, $systemUser, &$closedCount, &$autoAbsentCount) {
+                
+                // 3. 🛑 PESSIMISTIC LOCK: Lock this specific session row!
+                // If a teacher clicks "End Session" right now, they must wait until this transaction finishes.
+                $session = AttendanceSession::with('schedule')->where('id', $sessionId)->lockForUpdate()->first();
 
-            // If current time has passed the dynamic closing time
-            if ($now->greaterThanOrEqualTo($closingDateTime)) {
-                DB::transaction(function () use ($session, $absentStatus, $systemUser, &$autoAbsentCount) {
+                // Double check it wasn't closed by the teacher while we were waiting to get the lock
+                if (!$session || $session->status === 'closed') {
+                    return; // Skip it safely
+                }
+
+                $totalDuration = $session->schedule->total_session_minutes;
+                $closingDateTime = $session->started_at->copy()->addMinutes($totalDuration);
+
+                // If current time has passed the dynamic closing time
+                if ($now->greaterThanOrEqualTo($closingDateTime)) {
                     
-                    // 1. Get IDs of students already marked
                     $markedStudentIds = $session->records()->pluck('student_id')->toArray();
 
-                    // 2. Get all currently active students assigned to this exact class
+                    $sessionDate = $session->session_date->format('Y-m-d');
                     $enrolledStudents = Student::where('enrollment_status', 'active')
-                        ->whereHas('classHistory', function ($query) use ($session) {
+                        ->whereHas('classHistory', function ($query) use ($session, $sessionDate) {
                             $query->where('class_id', $session->class_id)
-                                  ->where('is_current', true);
+                                  ->where('started_at', '<=', $sessionDate)
+                                  ->where(function ($q) use ($sessionDate) {
+                                      $q->whereNull('ended_at')
+                                        ->orWhere('ended_at', '>=', $sessionDate);
+                                  });
                         })->get();
 
-                    // 3. Mark the missing ones as absent
                     $insertData = [];
                     foreach ($enrolledStudents as $student) {
                         if (!in_array($student->id, $markedStudentIds)) {
                             $insertData[] = [
-                                'id' => (string) Str::ulid(),
-                                'attendance_session_id' => $session->id, // Simplified!
+                                'id' => (string) \Illuminate\Support\Str::ulid(),
+                                'attendance_session_id' => $session->id,
                                 'student_id' => $student->id,
                                 'attendance_status_id' => $absentStatus->id,
                                 'recorded_by' => $systemUser->id,
@@ -78,12 +90,10 @@ class CloseAttendanceSessions extends Command
                         DB::table('attendance_records')->insert($insertData);
                     }
                     
-                    // Mark session as closed
                     $session->update(['status' => 'closed']);
-                });
-
-                $closedCount++;
-            }
+                    $closedCount++;
+                }
+            });
         }
 
         $this->info("Closed {$closedCount} sessions and auto-marked {$autoAbsentCount} students as absent.");

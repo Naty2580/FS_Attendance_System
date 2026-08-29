@@ -26,7 +26,8 @@ const resources = {
       "permission_btn": "Per",
       "absent_btn": "A",
       "end_session": "Submit & End Session", 
-      "session_ended": "Session Ended successfully."
+      "session_ended": "Session Ended successfully.",
+      "mark_rest_present": "Mark Rest as Present"
     }
   },
   am: {
@@ -52,7 +53,8 @@ const resources = {
       "permission_btn": "ፍቃድ",
       "absent_btn": "ቀሪ",
       "end_session": "አስረክብ እና ትምህርቱን ዝጋ", 
-      "session_ended": "ትምህርቱ በተሳካ ሁኔታ ተዘግቷል።"
+      "session_ended": "ትምህርቱ በተሳካ ሁኔታ ተዘግቷል።",
+      "mark_rest_present": "ቀሪዎቹን 'ተገኝቷል' ብለህ መዝግብ"
     }
   }
 };

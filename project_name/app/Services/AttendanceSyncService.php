@@ -35,22 +35,25 @@ class AttendanceSyncService
             }
 
             // Security: Is this user actually assigned to this class today?
-            $isAssigned = AttendanceAssignment::where('user_id', $userId)
-                ->where('class_id', $session->class_id)
-                ->where('is_active', true)
-                ->where('starts_at', '<=', $session->session_date)
-                ->where(function ($query) use ($session) {
-                    $query->whereNull('ends_at')
-                          ->orWhere('ends_at', '>=', $session->session_date);
-                })->exists();
+           $isGlobalAdmin = auth()->user()->hasRole(['System Administrator', 'HR Leader']);
 
-            if (!$isAssigned && !auth()->user()->can('override closed attendance')) {
-                foreach ($group as $record) {
-                    $results['failed'][] = ['sync_id' => $record['sync_id'], 'reason' => 'Unauthorized for this class.'];
+            if (!$isGlobalAdmin) {
+                $isAssigned = AttendanceAssignment::where('user_id', $userId)
+                    ->where('class_id', $session->class_id)
+                    ->where('is_active', true)
+                    ->where('starts_at', '<=', $session->session_date)
+                    ->where(function ($query) use ($session) {
+                        $query->whereNull('ends_at')
+                              ->orWhere('ends_at', '>=', $session->session_date);
+                    })->exists();
+
+                if (!$isAssigned && !auth()->user()->can('override closed attendance')) {
+                    foreach ($group as $record) {
+                        $results['failed'][] = ['sync_id' => $record['sync_id'], 'reason' => 'Unauthorized for this class.'];
+                    }
+                    continue;
                 }
-                continue;
             }
-
             $window = $session->getCurrentWindow();
             $canOverride = auth()->user()->can('override closed attendance');
 
@@ -65,11 +68,13 @@ class AttendanceSyncService
                 }
 
                 try {
+                    // 🛑 DEADLOCK PROTECTION: Notice the "3" at the end of this transaction. 
+                    // This tells Laravel to retry this exact transaction up to 3 times if Postgres reports a deadlock!
                     DB::transaction(function () use ($data, $sessionId, $userId, $statuses) {
                         $newStatusId = $statuses[$data['status_code']]->id;
                         $recordedAt = Carbon::parse($data['recorded_at']);
 
-                        // Use the new attendance_session_id foreign key
+                        // Pessimistic lock on the specific student's record to prevent double-overwrites
                         $existingRecord = AttendanceRecord::where('attendance_session_id', $sessionId)
                             ->where('student_id', $data['student_id'])
                             ->lockForUpdate()
@@ -93,20 +98,25 @@ class AttendanceSyncService
                             }
                         } else {
                             AttendanceRecord::create([
-                                'attendance_session_id' => $sessionId, // Simplified!
+                                'attendance_session_id' => $sessionId,
                                 'student_id' => $data['student_id'],
                                 'attendance_status_id' => $newStatusId,
                                 'recorded_by' => $userId,
                                 'recorded_at' => $recordedAt,
                             ]);
                         }
-                    });
+                    }, 3); // <-- The Magic Number (3 Retries)
 
                     $results['synced'][] = $data['sync_id'];
 
                 } catch (\Exception $e) {
-                    Log::error("Attendance Sync Error: " . $e->getMessage());
-                    $results['failed'][] = ['sync_id' => $data['sync_id'], 'reason' => 'Server error.'];
+                    // If it fails even after 3 retries, log the exact reason and fail safely
+                    Log::error("CRITICAL: Attendance Sync Failed for Student {$data['student_id']} in Session {$sessionId}. Reason: " . $e->getMessage());
+                    
+                    $results['failed'][] = [
+                        'sync_id' => $data['sync_id'], 
+                        'reason' => 'Database transaction failed.'
+                    ];
                 }
             }
         }

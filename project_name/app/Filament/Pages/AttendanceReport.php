@@ -69,6 +69,34 @@ class AttendanceReport extends Page implements HasTable, HasForms
         ];
     }
 
+    // public function form(Schema $schema): Schema
+    // {
+    //     return $schema
+    //         ->components([
+    //             Section::make('Report Filters')
+    //                 ->columns(3)
+    //                 ->schema([
+    //                     DatePicker::make('from_date')->label('From Date')->required(),
+    //                     DatePicker::make('to_date')->label('To Date')->required(),
+    //                     Select::make('class_id')
+    //                         ->label('Filter by Class (Optional)')
+    //                         ->options(SchoolClass::where('is_active', true)->pluck('name', 'id'))
+    //                         ->searchable(),
+    //                     Select::make('session_type_id')
+    //                         ->label('Filter by Session Type (Optional)')
+    //                         ->options(AttendanceSessionType::where('is_active', true)->pluck('name', 'id')),
+                        
+    //                     Toggle::make('count_late')
+    //                         ->label('Count Late as Attendance (Weight 1)')
+    //                         ->inline(false),
+    //                     Toggle::make('count_permission')
+    //                         ->label('Count Permission as Attendance (Weight 1)')
+    //                         ->inline(false),
+    //                 ])
+    //         ])
+    //         ->statePath('data'); 
+    // }
+
     public function form(Schema $schema): Schema
     {
         return $schema
@@ -76,22 +104,36 @@ class AttendanceReport extends Page implements HasTable, HasForms
                 Section::make('Report Filters')
                     ->columns(3)
                     ->schema([
-                        DatePicker::make('from_date')->label('From Date')->required(),
-                        DatePicker::make('to_date')->label('To Date')->required(),
+                        DatePicker::make('from_date')
+                            ->label('From Date')
+                            ->required()
+                            ->live(), // 🌟 ADDED THIS
+                            
+                        DatePicker::make('to_date')
+                            ->label('To Date')
+                            ->required()
+                            ->live(), // 🌟 ADDED THIS
+                            
                         Select::make('class_id')
                             ->label('Filter by Class (Optional)')
                             ->options(SchoolClass::where('is_active', true)->pluck('name', 'id'))
-                            ->searchable(),
+                            ->searchable()
+                            ->live(), // 🌟 ADDED THIS
+                            
                         Select::make('session_type_id')
                             ->label('Filter by Session Type (Optional)')
-                            ->options(AttendanceSessionType::where('is_active', true)->pluck('name', 'id')),
+                            ->options(AttendanceSessionType::where('is_active', true)->pluck('name', 'id'))
+                            ->live(), // 🌟 ADDED THIS
                         
                         Toggle::make('count_late')
                             ->label('Count Late as Attendance (Weight 1)')
-                            ->inline(false),
+                            ->inline(false)
+                            ->live(), // 🌟 ADDED THIS
+                            
                         Toggle::make('count_permission')
                             ->label('Count Permission as Attendance (Weight 1)')
-                            ->inline(false),
+                            ->inline(false)
+                            ->live(), // 🌟 ADDED THIS
                     ])
             ])
             ->statePath('data'); 
@@ -99,10 +141,13 @@ class AttendanceReport extends Page implements HasTable, HasForms
 
     public function table(Table $table): Table
     {
+       {
         return $table
             ->query(function () {
-                $query = Student::query()->where('enrollment_status', 'active');
+                // Base query
+                $query = Student::query();
 
+                // Apply the custom Date/Class form filters from the top of the page
                 if ($this->class_id) {
                     $query->whereHas('classHistory', function (Builder $q) {
                         $q->where('class_id', $this->class_id)->where('is_current', true);
@@ -111,44 +156,67 @@ class AttendanceReport extends Page implements HasTable, HasForms
 
                 return $query;
             })
+            // 🌟 1. ENABLE SEARCHING ON COLUMNS
             ->columns([
-                Tables\Columns\TextColumn::make('student_number')->label('ID')->sortable(),
-                Tables\Columns\TextColumn::make('full_name')->label('Student Name')->sortable(),
+                \Filament\Tables\Columns\TextColumn::make('student_number')
+                    ->label('ID')
+                    ->sortable()
+                    ->searchable(), // Allows searching by ID
+                    
+                \Filament\Tables\Columns\TextColumn::make('full_name')
+                    ->label('Student Name')
+                    ->sortable()
+                    // Allows searching by First, Middle, or Last name
+                    ->searchable(['first_name', 'middle_name', 'last_name']), 
                 
-                Tables\Columns\TextColumn::make('present_count')
+                \Filament\Tables\Columns\TextColumn::make('enrollment_status')
+                    ->label('Status')
+                    ->badge()
+                    ->colors(['success' => 'active', 'danger' => 'inactive']),
+
+                \Filament\Tables\Columns\TextColumn::make('present_count')
                     ->label('Present')
                     ->badge()
                     ->color('success')
                     ->state(fn (Student $record) => $this->getAttendanceCount($record, 'present')),
                 
-                Tables\Columns\TextColumn::make('late_count')
+                \Filament\Tables\Columns\TextColumn::make('late_count')
                     ->label('Late')
                     ->badge()
                     ->color('warning')
                     ->state(fn (Student $record) => $this->getAttendanceCount($record, 'late')),
 
-                Tables\Columns\TextColumn::make('permission_count')
+                \Filament\Tables\Columns\TextColumn::make('permission_count')
                     ->label('Permission')
                     ->badge()
                     ->color('info')
                     ->state(fn (Student $record) => $this->getAttendanceCount($record, 'permission')),
 
-                Tables\Columns\TextColumn::make('absent_count')
+                \Filament\Tables\Columns\TextColumn::make('absent_count')
                     ->label('Absent')
                     ->badge()
                     ->color('danger')
                     ->state(fn (Student $record) => $this->getAttendanceCount($record, 'absent')),
 
-                Tables\Columns\TextColumn::make('score')
-                    ->label('Attendance Score')
+                \Filament\Tables\Columns\TextColumn::make('score')
+                    ->label('Score')
                     ->weight('bold')
                     ->state(function (Student $record) {
                         $present = $this->getAttendanceCount($record, 'present');
                         $late = $this->count_late ? $this->getAttendanceCount($record, 'late') : 0;
                         $permission = $this->count_permission ? $this->getAttendanceCount($record, 'permission') : 0;
-                        
                         return $present + $late + $permission;
                     }),
+            ])
+            // 🌟 2. ENABLE ADVANCED FILTERS
+            ->filters([
+                \Filament\Tables\Filters\SelectFilter::make('enrollment_status')
+                    ->options([
+                        'active' => 'Active Only',
+                        'inactive' => 'Inactive Only',
+                    ])
+                    ->default('active')
+                    ->label('Enrollment Status'),
             ])
             ->headerActions([
                 \Filament\Actions\ExportAction::make()
@@ -156,20 +224,24 @@ class AttendanceReport extends Page implements HasTable, HasForms
                     ->exporter(\App\Filament\Exports\StudentExporter::class)
                     ->color('success'),
                 
+                // 🌟 3. PASS THE TABLE'S SEARCH QUERY TO THE PDF GENERATOR
                 \Filament\Actions\Action::make('export_pdf')
                     ->label('Export PDF')
                     ->color('danger')
                     ->icon('heroicon-o-document-arrow-down')
-                    ->url(fn () => route('export.attendance.pdf', [
+                    ->url(fn (\Filament\Tables\Contracts\HasTable $livewire) => route('export.attendance.pdf', [
                         'from_date' => $this->from_date,
                         'to_date' => $this->to_date,
                         'class_id' => $this->class_id,
                         'session_type_id' => $this->session_type_id,
                         'count_late' => $this->count_late,
                         'count_permission' => $this->count_permission,
+                        // Grab the actual search string the user typed in the Filament table!
+                        'search' => $livewire->getTableSearch(), 
                     ]))
                     ->openUrlInNewTab(),
             ]);
+    }
     }
 
    private function getAttendanceCount(Student $student, string $statusCode): int

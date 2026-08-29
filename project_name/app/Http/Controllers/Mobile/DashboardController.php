@@ -5,12 +5,15 @@ namespace App\Http\Controllers\Mobile;
 use App\Http\Controllers\Controller;
 use App\Models\AttendanceSchedule;
 use App\Models\AttendanceSession;
+use App\Models\AttendanceSessionClass;
 use App\Models\AttendanceAssignment;
+use App\Models\SchoolClass;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Carbon\Carbon;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Database\UniqueConstraintViolationException;
 
 class DashboardController extends Controller
 {
@@ -18,22 +21,30 @@ class DashboardController extends Controller
     {
         $now = Carbon::now();
         $todayDateString = $now->format('Y-m-d');
-        $dayOfWeek = strtolower($now->englishDayOfWeek); // e.g., 'sunday'
+        $dayOfWeek = strtolower($now->englishDayOfWeek);
         $user = $request->user();
 
-        // 1. Get classes the user is assigned to today
-        $assignedClassIds = AttendanceAssignment::where('user_id', $user->id)
-            ->where('is_active', true)
-            ->where('starts_at', '<=', $todayDateString)
-            ->where(function ($query) use ($todayDateString) {
-                $query->whereNull('ends_at')->orWhere('ends_at', '>=', $todayDateString);
-            })->pluck('class_id')->toArray();
+        // Check if user has God Mode / HR Leader override powers
+        $isGlobalAdmin = $user->hasRole(['System Administrator', 'HR Leader']);
 
-        if (empty($assignedClassIds)) {
-            return Inertia::render('Mobile/Dashboard', ['todaySessions' => []]);
+        if ($isGlobalAdmin) {
+            // Admins get to see ALL active classes
+            $assignedClassIds = SchoolClass::where('is_active', true)->pluck('id')->toArray();
+        } else {
+            // Regular teachers only see their assigned classes
+            $assignedClassIds = AttendanceAssignment::where('user_id', $user->id)
+                ->where('is_active', true)
+                ->where('starts_at', '<=', $todayDateString)
+                ->where(function ($query) use ($todayDateString) {
+                    $query->whereNull('ends_at')->orWhere('ends_at', '>=', $todayDateString);
+                })->pluck('class_id')->toArray();
         }
 
-        // 2. Find active Schedule Blueprints for TODAY that include these classes
+        if (empty($assignedClassIds)) {
+            return Inertia::render('Mobile/Dashboard', ['todaySessions' => [], 'isAdmin' => $isGlobalAdmin]);
+        }
+
+        // Find active Schedule Blueprints for TODAY that include the targeted classes
         $schedules = AttendanceSchedule::with(['sessionType', 'classes' => function ($q) use ($assignedClassIds) {
                 $q->whereIn('classes.id', $assignedClassIds);
             }])
@@ -48,13 +59,11 @@ class DashboardController extends Controller
             })
             ->get();
 
-        // 3. Format for the UI
         $dashboardItems = [];
         
         foreach ($schedules as $schedule) {
             foreach ($schedule->classes as $schoolClass) {
                 
-                // Check if a session already exists for this exact class and schedule today
                 $existingSession = AttendanceSession::where('attendance_schedule_id', $schedule->id)
                     ->where('class_id', $schoolClass->id)
                     ->where('session_date', $todayDateString)
@@ -71,7 +80,6 @@ class DashboardController extends Controller
                     $status = 'created';
                     $window = $existingSession->getCurrentWindow();
                 } else {
-                    // Session hasn't started. Calculate if the teacher is ALLOWED to start it right now.
                     if ($schedule->expected_start_time) {
                         $expectedTime = Carbon::parse($todayDateString . ' ' . $schedule->expected_start_time);
                         $earliestStart = $expectedTime->copy()->subMinutes($schedule->start_window_before_minutes);
@@ -80,12 +88,11 @@ class DashboardController extends Controller
                         if ($now->between($earliestStart, $latestStart)) {
                             $isStartable = true;
                         } elseif ($now->greaterThan($latestStart)) {
-                            $window = 'expired'; // They missed the window to start it entirely
+                            $window = 'expired'; 
                         } else {
-                            $window = 'too_early'; // It's not time yet
+                            $window = 'too_early'; 
                         }
                     } else {
-                        // If admin didn't set an expected time, it can be started anytime today
                         $isStartable = true;
                     }
                 }
@@ -97,21 +104,24 @@ class DashboardController extends Controller
                     'class_name' => $schoolClass->name,
                     'type' => $schedule->sessionType->name,
                     'expected_start' => $expectedStartString,
-                    'status' => $status, // 'not_started' or 'created'
+                    'status' => $status, 
                     'current_window' => $window,
                     'is_startable' => $isStartable,
                 ];
             }
         }
 
+        // Sort items so classes appear in a logical order (e.g., Class 1A, then 1B)
+        usort($dashboardItems, function ($a, $b) {
+            return strcmp($a['class_name'], $b['class_name']);
+        });
+
         return Inertia::render('Mobile/Dashboard', [
             'todaySessions' => $dashboardItems,
+            'isAdmin' => $isGlobalAdmin // Send flag to frontend to show a warning badge
         ]);
     }
 
-    /**
-     * Triggers when the teacher taps "Start Session"
-     */
     public function startOrJoinSession(Request $request)
     {
         $request->validate([
@@ -123,38 +133,54 @@ class DashboardController extends Controller
         $todayDateString = $now->format('Y-m-d');
         
         $schedule = AttendanceSchedule::findOrFail($request->schedule_id);
+        $user = $request->user();
+        
+        $isGlobalAdmin = $user->hasRole(['System Administrator', 'HR Leader']);
 
-        // Security Validation: Ensure the user is actually assigned to this class today
-        $isAssigned = AttendanceAssignment::where('user_id', $request->user()->id)
-            ->where('class_id', $request->class_id)
-            ->where('is_active', true)
-            ->where('starts_at', '<=', $todayDateString)
-            ->where(function ($query) use ($todayDateString) {
-                $query->whereNull('ends_at')->orWhere('ends_at', '>=', $todayDateString);
-            })->exists();
+        // Security Validation
+        if (!$isGlobalAdmin) {
+            $isAssigned = AttendanceAssignment::where('user_id', $user->id)
+                ->where('class_id', $request->class_id)
+                ->where('is_active', true)
+                ->where('starts_at', '<=', $todayDateString)
+                ->where(function ($query) use ($todayDateString) {
+                    $query->whereNull('ends_at')->orWhere('ends_at', '>=', $todayDateString);
+                })->exists();
 
-        if (!$isAssigned) {
-            abort(403, 'You are not assigned to this class.');
+            if (!$isAssigned) {
+                abort(403, 'You are not assigned to this class.');
+            }
         }
 
-        $session = DB::transaction(function () use ($schedule, $todayDateString, $now, $request) {
+        try {
+            $session = DB::transaction(function () use ($schedule, $todayDateString, $now, $request) {
+                
+                $blueprintStart = Carbon::parse($schedule->expected_start_time ?? '00:00:00');
+                
+                // We fake the close time dynamically relative to NOW
+                $totalDurationMinutes = $schedule->total_session_minutes;
+                
+                return AttendanceSession::firstOrCreate(
+                    [
+                        'attendance_schedule_id' => $schedule->id,
+                        'class_id' => $request->class_id,
+                        'session_date' => $todayDateString,
+                    ],
+                    [
+                        'id' => (string) Str::ulid(),
+                        'started_at' => $now, 
+                        'status' => 'active',
+                    ]
+                );
+            });
             
-            // Create or Find the Session
-            return AttendanceSession::firstOrCreate(
-                [
-                    'attendance_schedule_id' => $schedule->id,
-                    'class_id' => $request->class_id,
-                    'session_date' => $todayDateString,
-                ],
-                [
-                    'id' => (string) Str::ulid(),
-                    'started_at' => $now, // The exact click time becomes the unalterable anchor!
-                    'status' => 'active',
-                ]
-            );
-        });
+        } catch (UniqueConstraintViolationException $e) {
+            $session = AttendanceSession::where('attendance_schedule_id', $schedule->id)
+                ->where('class_id', $request->class_id)
+                ->where('session_date', $todayDateString)
+                ->firstOrFail();
+        }
 
-        // Redirect directly to the Roster using the new unified Session ID
         return redirect()->route('attendance.roster', ['sessionId' => $session->id]);
     }
 }

@@ -21,8 +21,11 @@ Route::middleware(['auth'])->group(function () {
     Route::post('/sync/attendance', SyncController::class)->name('attendance.sync');
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
      Route::post('/dashboard/start-session', [DashboardController::class, 'startOrJoinSession'])->name('dashboard.start');
-    Route::post('/attendance/{sessionId}/end', [App\Http\Controllers\Mobile\AttendanceRosterController::class, 'endSession'])->name('attendance.end');
-    Route::get('/attendance/{sessionId}', [App\Http\Controllers\Mobile\AttendanceRosterController::class, 'show'])->name('attendance.roster');
+    Route::post('/attendance/{sessionId}/end', [AttendanceRosterController::class, 'endSession'])->name('attendance.end');
+
+    Route::post('/attendance/{sessionId}/bulk-present', [AttendanceRosterController::class, 'bulkMarkPresent'])->name('attendance.bulk-present');
+
+    Route::get('/attendance/{sessionId}', [AttendanceRosterController::class, 'show'])->name('attendance.roster');
      Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');

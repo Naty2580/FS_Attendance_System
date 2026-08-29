@@ -14,7 +14,6 @@ class PdfExportController extends Controller
 {
     public function __invoke(Request $request)
     {
-        // Require the user to have report viewing permissions
         if (!auth()->user()->can('export attendance reports')) {
             abort(403, 'Unauthorized to export reports.');
         }
@@ -26,25 +25,35 @@ class PdfExportController extends Controller
         $sessionTypeId = $request->query('session_type_id');
         $countLate = filter_var($request->query('count_late', true), FILTER_VALIDATE_BOOLEAN);
         $countPermission = filter_var($request->query('count_permission', false), FILTER_VALIDATE_BOOLEAN);
+        
+        // 🌟 GET THE SEARCH STRING
+        $search = $request->query('search');
 
         // Build the base query
         $query = Student::query()->where('enrollment_status', 'active');
+        
         if ($classId) {
             $query->whereHas('classHistory', function (Builder $q) use ($classId) {
                 $q->where('class_id', $classId)->where('is_current', true);
             });
         }
+
+        // 🌟 APPLY THE EXACT SAME SEARCH LOGIC AS FILAMENT
+        if (!empty($search)) {
+            $query->where(function ($q) use ($search) {
+                $q->where('first_name', 'ilike', "%{$search}%")
+                  ->orWhere('last_name', 'ilike', "%{$search}%")
+                  ->orWhere('student_number', 'ilike', "%{$search}%");
+            });
+        }
+
         $studentsRaw = $query->orderBy('first_name')->get();
 
-        // Calculate the data for each student
         $students = $studentsRaw->map(function ($student) use ($fromDate, $toDate, $sessionTypeId, $countLate, $countPermission) {
             
-           
-            // Reusable closure for querying specific statuses within the date range
             $countStatus = function ($statusCode) use ($student, $fromDate, $toDate, $sessionTypeId) {
                 return $student->attendanceRecords()
                     ->whereHas('status', fn ($q) => $q->where('code', $statusCode))
-                    // FIX: Changed from 'sessionClass.session' to just 'session'
                     ->whereHas('session', function ($q) use ($fromDate, $toDate, $sessionTypeId) {
                         $q->whereBetween('session_date', [$fromDate, $toDate]);
                         if ($sessionTypeId) {
@@ -58,7 +67,6 @@ class PdfExportController extends Controller
             $permission = $countStatus('permission');
             $absent = $countStatus('absent');
 
-            // Apply custom HR weights
             $score = $present + ($countLate ? $late : 0) + ($countPermission ? $permission : 0);
 
             return [
@@ -72,12 +80,12 @@ class PdfExportController extends Controller
             ];
         });
 
-        // Gather human-readable names for the header
         $filters = [
             'from_date' => $fromDate,
             'to_date' => $toDate,
-            'class_name' => $classId ? SchoolClass::find($classId)?->name : null,
-            'session_type_name' => $sessionTypeId ? AttendanceSessionType::find($sessionTypeId)?->name : null,
+            'class_name' => $classId ? SchoolClass::find($classId)?->name : 'All Classes',
+            'session_type_name' => $sessionTypeId ? AttendanceSessionType::find($sessionTypeId)?->name : 'All Types',
+            'search_term' => $search, // Show what they searched for on the PDF!
         ];
 
         // Generate the PDF

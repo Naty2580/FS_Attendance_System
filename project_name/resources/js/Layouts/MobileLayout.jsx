@@ -1,13 +1,28 @@
-import React from 'react';
+import React, { useEffect } from 'react'; // Add useEffect
 import { usePage, Link } from '@inertiajs/react';
-import { WifiOff, CloudUpload,  User, Globe  } from 'lucide-react';
+import { WifiOff, CloudUpload, User, Globe } from 'lucide-react';
 import { useAttendance } from '../Contexts/AttendanceContext';
 import { useTranslation } from 'react-i18next';
+// 🌟 ADD THIS IMPORT
+import { toast } from 'sonner';
 
 export default function MobileLayout({ children, header }) {
-    const { auth } = usePage().props;
+    const { auth, flash } = usePage().props; // Extract flash from props
     const { isOnline, isSyncing, pendingCount } = useAttendance();
     const { t, i18n } = useTranslation();
+
+    // 🌟 ADD THIS EFFECT: Watch for backend messages
+    useEffect(() => {
+        if (flash.success) {
+            toast.success(flash.success);
+        }
+        if (flash.error) {
+            toast.error(flash.error);
+        }
+        if (flash.warning) {
+            toast.warning(flash.warning);
+        }
+    }, [flash]);
 
     
     const toggleLanguage = () => {

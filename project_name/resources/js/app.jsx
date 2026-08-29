@@ -1,34 +1,28 @@
-import '../css/app.css';
-
 import './lib/i18n';
+import '../css/app.css';
 import { createInertiaApp } from '@inertiajs/react';
 import { resolvePageComponent } from 'laravel-vite-plugin/inertia-helpers';
 import { createRoot } from 'react-dom/client';
 import { AttendanceProvider } from './Contexts/AttendanceContext';
+// 🌟 ADD THIS IMPORT
+import { Toaster } from 'sonner';
 
-const appName = import.meta.env.VITE_APP_NAME || 'Laravel';
+const appName = import.meta.env.VITE_APP_NAME || 'Sunday School';
 
 createInertiaApp({
     title: (title) => `${title} - ${appName}`,
-    resolve: (name) => {
-        // Force the page component resolution explicitly
-        const page = resolvePageComponent(
-            `./Pages/${name}.jsx`, // or .tsx if using TypeScript
-            import.meta.glob('./Pages/**/*.jsx')
-        );
-        
-        if (!page) {
-            console.error(`Page component not found: ./Pages/${name}.jsx`);
-        }
-        return page;
-    },
+    resolve: (name) => resolvePageComponent(`./Pages/${name}.jsx`, import.meta.glob('./Pages/**/*.jsx')),
     setup({ el, App, props }) {
         const root = createRoot(el);
         root.render(
             <AttendanceProvider>
                 <App {...props} />
-             </AttendanceProvider>
+                {/* 🌟 ADD THIS COMPONENT (Rich Colors make it look highly professional) */}
+                <Toaster position="bottom-center" richColors />
+            </AttendanceProvider>
         );
     },
-    progress: { color: '#4B5563' }, 
+    progress: {
+        color: '#4B5563',
+    },
 });

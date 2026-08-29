@@ -1,39 +1,77 @@
-import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
-import { Head } from '@inertiajs/react';
-import DeleteUserForm from './Partials/DeleteUserForm';
-import UpdatePasswordForm from './Partials/UpdatePasswordForm';
+import React from 'react';
+import { Head, Link } from '@inertiajs/react';
+import MobileLayout from '../../Layouts/MobileLayout';
 import UpdateProfileInformationForm from './Partials/UpdateProfileInformationForm';
+import UpdatePasswordForm from './Partials/UpdatePasswordForm';
+import { Card, CardContent } from '../../Components/ui/card';
+import { ArrowLeft, LogOut, User as UserIcon } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
-export default function Edit({ mustVerifyEmail, status }) {
+export default function Edit({ auth, mustVerifyEmail, status }) {
+    const { t } = useTranslation();
+
     return (
-        <AuthenticatedLayout
-            header={
-                <h2 className="text-xl font-semibold leading-tight text-gray-800 dark:text-gray-200">
-                    Profile
-                </h2>
-            }
-        >
+        <MobileLayout>
             <Head title="Profile" />
 
-            <div className="py-12">
-                <div className="mx-auto max-w-7xl space-y-6 sm:px-6 lg:px-8">
-                    <div className="bg-white p-4 shadow sm:rounded-lg sm:p-8 dark:bg-gray-800">
+            <div className="mb-6 space-y-4">
+                {/* 🌟 Navigation Header */}
+                <div className="flex items-center gap-3">
+                    <Link href={route('dashboard')} className="p-2 bg-gray-200 rounded-full hover:bg-gray-300 transition">
+                        <ArrowLeft size={20} />
+                    </Link>
+                    <div>
+                        <h2 className="font-bold text-xl leading-tight">My Profile</h2>
+                        <p className="text-sm text-gray-500">{auth.user.email}</p>
+                    </div>
+                </div>
+            </div>
+
+            <div className="space-y-6 pb-12">
+                
+                {/* 🌟 Profile Information Card */}
+                <Card className="border-gray-200 shadow-sm overflow-hidden">
+                    <div className="bg-blue-50 px-4 py-3 border-b border-gray-100 flex items-center gap-2">
+                        <UserIcon size={18} className="text-blue-600" />
+                        <h3 className="font-semibold text-blue-900">Personal Information</h3>
+                    </div>
+                    <CardContent className="p-4 sm:p-6">
                         <UpdateProfileInformationForm
                             mustVerifyEmail={mustVerifyEmail}
                             status={status}
                             className="max-w-xl"
                         />
-                    </div>
+                    </CardContent>
+                </Card>
 
-                    <div className="bg-white p-4 shadow sm:rounded-lg sm:p-8 dark:bg-gray-800">
+                {/* 🌟 Update Password Card */}
+                <Card className="border-gray-200 shadow-sm overflow-hidden">
+                    <div className="bg-gray-50 px-4 py-3 border-b border-gray-100 flex items-center gap-2">
+                        <Lock size={18} className="text-gray-600" />
+                        <h3 className="font-semibold text-gray-800">Update Password</h3>
+                    </div>
+                    <CardContent className="p-4 sm:p-6">
                         <UpdatePasswordForm className="max-w-xl" />
-                    </div>
+                    </CardContent>
+                </Card>
 
-                    <div className="bg-white p-4 shadow sm:rounded-lg sm:p-8 dark:bg-gray-800">
-                        <DeleteUserForm className="max-w-xl" />
-                    </div>
+                {/* 🌟 Secure Logout Button */}
+                <div className="pt-4">
+                    <Link 
+                        href={route('logout')} 
+                        method="post" 
+                        as="button"
+                        className="w-full flex items-center justify-center gap-2 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 font-bold py-4 rounded-xl transition-colors active:scale-[0.98]"
+                    >
+                        <LogOut size={20} />
+                        Log Out
+                    </Link>
                 </div>
+
             </div>
-        </AuthenticatedLayout>
+        </MobileLayout>
     );
 }
+
+// Ensure you import Lock for the UI above
+import { Lock } from 'lucide-react';
