@@ -9,6 +9,21 @@ use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
+
+use Illuminate\Support\Facades\Artisan;
+
+// 🌟 SECURE WEB-CRON ENDPOINT
+Route::get('/system/run-scheduler/{token}', function ($token) {
+    // Only run if the secret token matches the one in our .env file
+    if ($token !== env('CRON_TOKEN')) {
+        abort(403, 'Unauthorized');
+    }
+    
+    // Run the scheduler
+    Artisan::call('schedule:run');
+    return response()->json(['status' => 'Scheduler executed']);
+});
+
 Route::get('/', function () {
     return Inertia::render('Welcome');
 });
